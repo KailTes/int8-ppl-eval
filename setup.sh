@@ -179,20 +179,26 @@ do_serve() {
     info "TP size: ${TP_SIZE}"
     [ -n "${VLLM_PLUGINS:-}" ] && info "VLLM_PLUGINS: ${VLLM_PLUGINS}"
 
-    # 后台启动 vllm serve
-    vllm serve "${model_path}" \
-        --dtype auto \
-        --gpu-memory-utilization 0.8 \
-        --enforce-eager \
-        --tensor-parallel-size "${TP_SIZE}" \
-        --host 0.0.0.0 \
-        --port "${SERVE_PORT}" \
-        ${EXTRA_SERVE_ARGS:-} \
-        > "${TASK_DIR}/vllm_serve.log" 2>&1 &
+    # 后台启动服务
+    if [ "${model_type}" = "pangu_v2_moe" ]; then
+        info "Using run_pangu.sh for pangu_v2_moe model"
+        bash /home/p00929643/omni-npu/start_server/run_pangu.sh \
+            > "${TASK_DIR}/vllm_serve.log" 2>&1 &
+    else
+        vllm serve "${model_path}" \
+            --dtype auto \
+            --gpu-memory-utilization 0.8 \
+            --enforce-eager \
+            --tensor-parallel-size "${TP_SIZE}" \
+            --host 0.0.0.0 \
+            --port "${SERVE_PORT}" \
+            ${EXTRA_SERVE_ARGS:-} \
+            > "${TASK_DIR}/vllm_serve.log" 2>&1 &
+    fi
 
     SERVE_PID=$!
     echo "${SERVE_PID}" > "${TASK_DIR}/.serve_pid"
-    info "vllm serve started (PID: ${SERVE_PID})"
+    info "Server started (PID: ${SERVE_PID})"
 
     wait_for_serve
 }
