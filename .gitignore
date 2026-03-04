@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 results/
+all_history*.txt
