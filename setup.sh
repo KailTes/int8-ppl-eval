@@ -2,17 +2,30 @@
 # ============================================================
 # omni-infer v1.0.0 W8A8 INT8 PPL 评测全流程
 #
+# 方式 B: 先 vllm serve 拉起模型，再通过 API 评测 PPL
+#
 # 用法:
-#   bash setup.sh install                          — 安装依赖 + 修复环境
-#   bash setup.sh quantize  /models/YourModel      — W8A8 量化
-#   bash setup.sh eval_fp16 /models/YourModel      — FP16 baseline PPL
-#   bash setup.sh eval_w8a8 /models/YourModel      — W8A8 INT8 PPL
-#   bash setup.sh all       /models/YourModel      — 全部依次执行
+#   bash setup.sh install                           — 安装依赖 + 修复环境
+#   bash setup.sh quantize  /models/YourModel       — W8A8 量化 (CPU)
+#   bash setup.sh serve     /models/YourModel       — 启动 vllm serve
+#   bash setup.sh eval      /models/YourModel       — 通过 API 评测 PPL
+#   bash setup.sh stop                              — 停止 vllm serve
+#   bash setup.sh eval_fp16 /models/YourModel       — serve + eval + stop (FP16)
+#   bash setup.sh eval_w8a8 /models/YourModel       — serve + eval + stop (W8A8)
+#   bash setup.sh all       /models/YourModel       — 全部依次执行
+#
+# 环境变量 (可选):
+#   VLLM_PLUGINS    — vllm 插件列表 (默认: 自动检测)
+#   SERVE_PORT      — vllm serve 端口 (默认: 8000)
+#   TP_SIZE         — tensor parallel size (默认: 1)
+#   EXTRA_SERVE_ARGS — 额外的 vllm serve 参数
 # ============================================================
 
 set -uo pipefail
 
 TASK_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVE_PORT="${SERVE_PORT:-8000}"
+TP_SIZE="${TP_SIZE:-1}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -49,6 +62,19 @@ fix_yaml_path() {
     fi
 }
 
+# 等待 vllm serve 就绪
+wait_for_serve() {
+    info "Waiting for vllm serve to be ready on port ${SERVE_PORT} ..."
+    for i in $(seq 1 120); do
+        if curl -s "http://localhost:${SERVE_PORT}/v1/models" > /dev/null 2>&1; then
+            info "vllm serve is ready!"
+            return 0
+        fi
+        sleep 2
+    done
+    error "vllm serve failed to start within 240 seconds. Check logs."
+}
+
 # ---- install ----
 do_install() {
     info "=== Install dependencies ==="
@@ -67,8 +93,8 @@ do_install() {
     fi
 
     # 安装
-    info "Installing lm-eval, llmcompressor, ray ..."
-    pip install lm-eval llmcompressor==0.8.1 ray 2>&1 | tail -5
+    info "Installing lm-eval[api], llmcompressor, ray ..."
+    pip install "lm-eval[api]" llmcompressor==0.8.1 ray 2>&1 | tail -5
 
     # 修复 torch
     NEW_VER=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
@@ -85,9 +111,6 @@ do_install() {
 
     # Pin versions
     pip install "compressed-tensors==0.12.2" --no-deps 2>&1 | tail -2
-    # transformers: 保持 >=4.57 即可，不强制 pin 具体版本
-    TRANS_VER=$(python3 -c "import transformers; v=transformers.__version__; print(v)")
-    info "transformers: ${TRANS_VER}"
 
     # 修复 yaml
     fix_yaml_path
@@ -134,51 +157,120 @@ do_quantize() {
     info "Quantize done → ${QUANT_OUTPUT}"
 }
 
-# ---- eval ----
-do_eval() {
-    local label="$1" model_path="$2" output_dir="$3"
+# ---- serve ----
+do_serve() {
+    [ -z "${1:-}" ] && error "Usage: setup.sh serve /path/to/model"
+    local model_path="$1"
+
     source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null || true
-    fix_yaml_path
 
     local model_type
     model_type=$(detect_model_type "${model_path}")
-    info "=== ${label} PPL Eval ==="
+
+    # 设置 VLLM_PLUGINS (用户可通过环境变量覆盖)
+    export OMNI_NPU_PATCHES_DIR="${model_type}"
+    export ASCEND_RT_VISIBLE_DEVICES="${ASCEND_RT_VISIBLE_DEVICES:-0}"
+    export VLLM_USE_V1="${VLLM_USE_V1:-0}"
+
+    info "=== Starting vllm serve ==="
     info "Model: ${model_path}"
-    info "Patches: ${model_type}"
+    info "Model type: ${model_type}"
+    info "Port: ${SERVE_PORT}"
+    info "TP size: ${TP_SIZE}"
+    [ -n "${VLLM_PLUGINS:-}" ] && info "VLLM_PLUGINS: ${VLLM_PLUGINS}"
+
+    # 后台启动 vllm serve
+    vllm serve "${model_path}" \
+        --dtype auto \
+        --gpu-memory-utilization 0.8 \
+        --enforce-eager \
+        --tensor-parallel-size "${TP_SIZE}" \
+        --host 0.0.0.0 \
+        --port "${SERVE_PORT}" \
+        ${EXTRA_SERVE_ARGS:-} \
+        > "${TASK_DIR}/vllm_serve.log" 2>&1 &
+
+    SERVE_PID=$!
+    echo "${SERVE_PID}" > "${TASK_DIR}/.serve_pid"
+    info "vllm serve started (PID: ${SERVE_PID})"
+
+    wait_for_serve
+}
+
+# ---- stop ----
+do_stop() {
+    info "=== Stopping vllm serve ==="
+    if [ -f "${TASK_DIR}/.serve_pid" ]; then
+        local pid
+        pid=$(cat "${TASK_DIR}/.serve_pid")
+        kill "${pid}" 2>/dev/null || true
+        sleep 2
+        kill -9 "${pid}" 2>/dev/null || true
+        rm -f "${TASK_DIR}/.serve_pid"
+    fi
+    # 兜底: 杀掉所有 vllm 相关进程
+    pkill -f "vllm serve" 2>/dev/null || true
+    sleep 2
+    pkill -9 -f "EngineCore" 2>/dev/null || true
+    pkill -9 -f "APIServer" 2>/dev/null || true
+    sleep 1
+    info "vllm serve stopped"
+}
+
+# ---- eval (通过 API) ----
+do_eval() {
+    [ -z "${1:-}" ] && error "Usage: setup.sh eval /path/to/model [output_dir]"
+    local model_path="$1"
+    local output_dir="${2:-$(dirname "${TASK_DIR}")/results/$(basename "${model_path}")}"
+
+    source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null || true
+    fix_yaml_path
+
+    info "=== PPL Eval via API ==="
+    info "Model: ${model_path}"
+    info "API: http://localhost:${SERVE_PORT}/v1/completions"
+    info "Output: ${output_dir}"
 
     mkdir -p "${output_dir}"
-    OMNI_NPU_PATCHES_DIR="${model_type}" \
-    ASCEND_RT_VISIBLE_DEVICES=0 \
-    VLLM_USE_V1=0 \
     HF_DATASETS_OFFLINE=1 \
-    lm_eval --model vllm \
-        --model_args "pretrained=${model_path},dtype=auto,gpu_memory_utilization=0.8,enforce_eager=True" \
+    lm_eval --model local-completions \
+        --model_args "model=${model_path},base_url=http://localhost:${SERVE_PORT}/v1/completions,tokenizer_backend=huggingface,tokenizer=${model_path}" \
         --include_path "${TASK_DIR}" \
         --tasks wikitext_local \
         --batch_size auto \
-        --output_path "${output_dir}" \
-    || warn "Engine exited with error (results likely still valid)"
+        --output_path "${output_dir}"
 
-    info "${label} done → ${output_dir}"
+    info "Eval done → ${output_dir}"
 }
 
+# ---- eval_fp16: serve → eval → stop ----
 do_eval_fp16() {
     [ -z "${1:-}" ] && error "Usage: setup.sh eval_fp16 /path/to/model"
     resolve_paths "$1"
-    do_eval "FP16" "${MODEL_PATH}" "${RESULTS_FP16}"
+    info "====== FP16 Pipeline: serve → eval → stop ======"
+    do_serve "${MODEL_PATH}"
+    do_eval "${MODEL_PATH}" "${RESULTS_FP16}" || true
+    do_stop
 }
 
+# ---- eval_w8a8: serve → eval → stop ----
 do_eval_w8a8() {
     [ -z "${1:-}" ] && error "Usage: setup.sh eval_w8a8 /path/to/model"
     resolve_paths "$1"
-    [ -f "${QUANT_OUTPUT}/model.safetensors" ] || error "Quantized model not found: ${QUANT_OUTPUT}. Run 'setup.sh quantize' first."
-    do_eval "W8A8" "${QUANT_OUTPUT}" "${RESULTS_W8A8}"
+    [ -d "${QUANT_OUTPUT}" ] || error "Quantized model not found: ${QUANT_OUTPUT}. Run 'setup.sh quantize' first."
+    info "====== W8A8 Pipeline: serve → eval → stop ======"
+    do_serve "${QUANT_OUTPUT}"
+    do_eval "${QUANT_OUTPUT}" "${RESULTS_W8A8}" || true
+    do_stop
 }
 
 # ---- main ----
 case "${1:-help}" in
     install)   do_install ;;
     quantize)  do_quantize "${2:-}" ;;
+    serve)     do_serve "${2:-}" ;;
+    eval)      do_eval "${2:-}" "${3:-}" ;;
+    stop)      do_stop ;;
     eval_fp16) do_eval_fp16 "${2:-}" ;;
     eval_w8a8) do_eval_w8a8 "${2:-}" ;;
     all)
@@ -200,11 +292,22 @@ case "${1:-help}" in
         echo "Commands:"
         echo "  install                    Install deps + fix environment"
         echo "  quantize  /path/to/model   W8A8 quantization (CPU)"
-        echo "  eval_fp16 /path/to/model   FP16 baseline PPL"
-        echo "  eval_w8a8 /path/to/model   W8A8 INT8 PPL"
+        echo "  serve     /path/to/model   Start vllm serve"
+        echo "  eval      /path/to/model   Eval PPL via API (serve must be running)"
+        echo "  stop                       Stop vllm serve"
+        echo "  eval_fp16 /path/to/model   FP16: serve + eval + stop"
+        echo "  eval_w8a8 /path/to/model   W8A8: serve + eval + stop"
         echo "  all       /path/to/model   Run all steps"
         echo ""
-        echo "Example:"
-        echo "  bash setup.sh all /models/MyPrivateModel"
+        echo "Environment variables:"
+        echo "  VLLM_PLUGINS         vllm plugins (e.g. 'omni-npu,omni_custom_models')"
+        echo "  SERVE_PORT           vllm serve port (default: 8000)"
+        echo "  TP_SIZE              tensor parallel size (default: 1)"
+        echo "  EXTRA_SERVE_ARGS     extra args for vllm serve"
+        echo ""
+        echo "Examples:"
+        echo "  bash setup.sh all /models/Qwen3-0.6B"
+        echo "  TP_SIZE=4 bash setup.sh all /models/Large-92B"
+        echo "  VLLM_PLUGINS='omni-npu,omni_custom_models' bash setup.sh eval_fp16 /models/MyModel"
         ;;
 esac
