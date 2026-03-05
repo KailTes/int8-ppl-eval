@@ -1,5 +1,5 @@
 task: wikitext_local
-dataset_path: __TASK_DIR__/data/wikitext2_doc_level
+dataset_path: /home/p00929643/int8/migration_pack/data/wikitext2_doc_level
 output_type: loglikelihood_rolling
 test_split: test
 doc_to_text: ""

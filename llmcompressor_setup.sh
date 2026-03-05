@@ -157,7 +157,7 @@ do_quantize() {
     fi
 
     TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
-    python3 "${TASK_DIR}/quantize_w8a8_cpu.py" \
+    python3 "${TASK_DIR}/llmcompressor_quantize_w8a8.py" \
         --model "${MODEL_PATH}" --output "${QUANT_OUTPUT}"
     info "Quantize done → ${QUANT_OUTPUT}"
 }
