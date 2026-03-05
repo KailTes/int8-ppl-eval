@@ -190,10 +190,11 @@ do_serve() {
     info "TP size: ${TP_SIZE}"
     [ -n "${VLLM_PLUGINS:-}" ] && info "VLLM_PLUGINS: ${VLLM_PLUGINS}"
 
-    # 后台启动服务
+    # 启动服务
     if [ "${model_type}" = "pangu_v2_moe" ]; then
         info "Using run_pangu.sh for pangu_v2_moe model"
         bash /home/p00929643/omni-npu/start_server/run_pangu.sh
+        wait_for_serve
     else
         vllm serve "${model_path}" \
             --dtype auto \
@@ -204,13 +205,12 @@ do_serve() {
             --port "${SERVE_PORT}" \
             ${EXTRA_SERVE_ARGS:-} \
             > "${TASK_DIR}/vllm_serve.log" 2>&1 &
+
+        SERVE_PID=$!
+        echo "${SERVE_PID}" > "${TASK_DIR}/.serve_pid"
+        info "Server started (PID: ${SERVE_PID})"
+        wait_for_serve
     fi
-
-    SERVE_PID=$!
-    echo "${SERVE_PID}" > "${TASK_DIR}/.serve_pid"
-    info "Server started (PID: ${SERVE_PID})"
-
-    wait_for_serve
 }
 
 # ---- stop ----
