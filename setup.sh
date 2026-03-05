@@ -263,10 +263,9 @@ do_eval() {
 do_eval_fp16() {
     [ -z "${1:-}" ] && error "Usage: setup.sh eval_fp16 /path/to/model"
     resolve_paths "$1"
-    info "====== FP16 Pipeline: serve → eval → stop ======"
+    info "====== FP16 Pipeline: serve → eval ======"
     do_serve "${MODEL_PATH}"
     do_eval "${MODEL_PATH}" "${RESULTS_FP16}" || true
-    do_stop
 }
 
 # ---- eval_w8a8: serve → eval → stop ----
@@ -274,10 +273,9 @@ do_eval_w8a8() {
     [ -z "${1:-}" ] && error "Usage: setup.sh eval_w8a8 /path/to/model"
     resolve_paths "$1"
     [ -d "${QUANT_OUTPUT}" ] || error "Quantized model not found: ${QUANT_OUTPUT}. Run 'setup.sh quantize' first."
-    info "====== W8A8 Pipeline: serve → eval → stop ======"
+    info "====== W8A8 Pipeline: serve → eval ======"
     do_serve "${QUANT_OUTPUT}"
     do_eval "${QUANT_OUTPUT}" "${RESULTS_W8A8}" || true
-    do_stop
 }
 
 # ---- main ----
