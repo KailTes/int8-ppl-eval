@@ -249,6 +249,7 @@ do_eval() {
 
     mkdir -p "${output_dir}"
     HF_DATASETS_OFFLINE=1 \
+    no_proxy="*" NO_PROXY="*" \
     lm_eval --model local-completions \
         --model_args "model=${model_path},base_url=http://7.150.11.4:8000/v1/completions,tokenizer_backend=huggingface,tokenizer=${model_path},trust_remote_code=True" \
         --include_path "${TASK_DIR}" \
