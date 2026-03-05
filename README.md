@@ -21,8 +21,10 @@
 
 ```bash
 docker run -d --name int8-eval \
-  --device /dev/davinci0 --device /dev/davinci_manager \
-  --device /dev/devmm_svm --device /dev/hisi_hdc \
+  --device /dev/davinci0 \
+  --device /dev/davinci_manager \
+  --device /dev/devmm_svm \
+  --device /dev/hisi_hdc \
   -v /path/to/your/models:/models:ro \
   -v /path/to/this/repo:/data/int8-ppl-eval \
   -v /usr/local/dcmi:/usr/local/dcmi \
@@ -53,10 +55,10 @@ bash /data/int8-ppl-eval/setup.sh all /models/YourModel
 ### 3. 分步执行
 
 ```bash
-bash setup.sh install                      # 安装依赖
-bash setup.sh quantize  /models/YourModel  # W8A8 量化
-bash setup.sh eval_fp16 /models/YourModel  # FP16 PPL (自动 serve/stop)
-bash setup.sh eval_w8a8 /models/YourModel  # W8A8 PPL (自动 serve/stop)
+bash setup.sh install                                          # 安装依赖
+bash setup.sh quantize  /models/YourModel                      # W8A8 量化
+bash setup.sh eval_fp16 /models/YourModel 2>&1 | tee fp16.log  # FP16 PPL
+bash setup.sh eval_w8a8 /models/YourModel 2>&1 | tee w8a8.log  # W8A8 PPL
 ```
 
 也可以手动控制 serve 生命周期:
