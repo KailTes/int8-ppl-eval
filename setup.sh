@@ -242,8 +242,13 @@ do_eval() {
     source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null || true
     fix_yaml_path
 
+    # 从服务获取实际注册的模型名
+    local served_model
+    served_model=$(curl --noproxy '*' -s "http://7.150.11.4:8000/v1/models" | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null || echo "${model_path}")
+
     info "=== PPL Eval via API ==="
     info "Model: ${model_path}"
+    info "Served model name: ${served_model}"
     info "API: http://7.150.11.4:8000/v1/completions"
     info "Output: ${output_dir}"
 
@@ -251,7 +256,7 @@ do_eval() {
     HF_DATASETS_OFFLINE=1 \
     no_proxy="*" NO_PROXY="*" \
     lm_eval --model local-completions \
-        --model_args "model=${model_path},base_url=http://7.150.11.4:8000/v1/completions,tokenizer_backend=huggingface,tokenizer=${model_path},trust_remote_code=True" \
+        --model_args "model=${served_model},base_url=http://7.150.11.4:8000/v1/completions,tokenizer_backend=huggingface,tokenizer=${model_path},trust_remote_code=True" \
         --include_path "${TASK_DIR}" \
         --tasks wikitext_local \
         --batch_size auto \
