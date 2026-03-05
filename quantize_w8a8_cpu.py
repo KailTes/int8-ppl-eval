@@ -29,9 +29,9 @@ def main():
 
     print(f"Loading model from {args.model} ...")
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, device_map="cpu", torch_dtype="auto"
+        args.model, device_map="cpu", torch_dtype="auto", trust_remote_code=True
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
     recipe = QuantizationModifier(
         targets="Linear",
