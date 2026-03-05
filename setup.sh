@@ -176,6 +176,12 @@ do_serve() {
     export ASCEND_RT_VISIBLE_DEVICES="${ASCEND_RT_VISIBLE_DEVICES:-0}"
     export VLLM_USE_V1="${VLLM_USE_V1:-0}"
 
+    # 检测服务是否已在运行
+    if curl -s "http://localhost:${SERVE_PORT}/v1/models" > /dev/null 2>&1; then
+        info "Service already running on port ${SERVE_PORT}, skipping launch"
+        return 0
+    fi
+
     info "=== Starting vllm serve ==="
     info "Model: ${model_path}"
     info "Model type: ${model_type}"
@@ -186,7 +192,7 @@ do_serve() {
     # 后台启动服务
     if [ "${model_type}" = "pangu_v2_moe" ]; then
         info "Using run_pangu.sh for pangu_v2_moe model"
-        bash /home/p00929643/omni-npu/start_server/run_pangu.sh &
+        bash /home/p00929643/omni-npu/start_server/run_pangu.sh
     else
         vllm serve "${model_path}" \
             --dtype auto \
