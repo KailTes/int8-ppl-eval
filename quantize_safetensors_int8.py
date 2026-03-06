@@ -22,8 +22,15 @@ from pathlib import Path
 import torch
 from safetensors.torch import load_file, save_file
 
-# Tensors matching these patterns are NOT quantized
-SKIP_PATTERNS = ["embed", "norm", "lm_head"]
+# Tensors matching these patterns are NOT quantized.
+# Use ".gate." (with dots) to match MoE router gate but NOT "gate_proj" (expert GLU weight).
+SKIP_PATTERNS = [
+    "embed",              # embedding layers
+    "norm",               # layer norm
+    "lm_head",            # LM head
+    ".gate.",             # MoE router/gate (NOT gate_proj which is a GLU expert weight)
+    "attn_mhc_module",    # Multi-Head Compression (PanGu-specific, unsupported by omni-npu INT8)
+]
 
 
 def should_quantize(name: str, tensor: torch.Tensor) -> bool:
@@ -106,8 +113,8 @@ def main():
     parser.add_argument(
         "--ignore",
         nargs="*",
-        default=["lm_head"],
-        help="Layer names to skip (default: lm_head)",
+        default=["lm_head", "re:.*\\.gate\\..*", "re:.*attn_mhc_module.*"],
+        help="Layer name patterns for quantization_config.ignore (default: lm_head, gate, mhc)",
     )
     args = parser.parse_args()
 
