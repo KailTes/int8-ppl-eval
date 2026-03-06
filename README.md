@@ -29,26 +29,39 @@
 纯 CPU 离线量化，不依赖 GPU/NPU/模型代码，直接对 safetensors 权重做 RTN per-channel INT8 量化。
 输出 compressed-tensors 格式，兼容 vllm / omni-infer INT8 推理。
 
-### 单独量化
+所有操作通过 `llmcompressor_setup.sh` 完成（量化、拉起服务、评测 PPL）：
 
 ```bash
-# 纯 CPU 量化 (昇腾容器内需要 TORCH_DEVICE_BACKEND_AUTOLOAD=0)
-TORCH_DEVICE_BACKEND_AUTOLOAD=0 \
-python3 quantize_safetensors_int8.py \
-    --model /path/to/fp16-model \
-    --output /path/to/output-w8a8
-```
-
-### 通过主脚本一键量化 + 评测
-
-```bash
-# 量化
+# 第 1 步: 量化 (纯 CPU，昇腾容器内自动禁用 torch_npu)
+#   /models 只读时用 QUANT_OUTPUT_BASE 指定输出目录
 QUANT_OUTPUT_BASE=/data/models \
 bash llmcompressor_setup.sh quantize_rtn /models/Qwen3-0.6B
+# → 输出: /data/models/Qwen3-0.6B-RTN-W8A8
 
-# 评测
+# 第 2 步: 拉起 INT8 模型服务 + PPL 评测 (一条命令完成 serve + eval)
+QUANT_OUTPUT_BASE=/data/models \
 bash llmcompressor_setup.sh eval_rtn /models/Qwen3-0.6B
+
+# 第 3 步: 停止服务
+bash llmcompressor_setup.sh stop
 ```
+
+也可以同时跑 FP16 baseline 对比：
+
+```bash
+# FP16 baseline
+bash llmcompressor_setup.sh eval_fp16 /models/Qwen3-0.6B
+bash llmcompressor_setup.sh stop
+
+# W8A8 RTN
+QUANT_OUTPUT_BASE=/data/models \
+bash llmcompressor_setup.sh eval_rtn /models/Qwen3-0.6B
+bash llmcompressor_setup.sh stop
+```
+
+> `quantize_safetensors_int8.py` 也可以独立使用:
+> `python3 quantize_safetensors_int8.py --model /path/to/fp16 --output /path/to/int8`
+> 但后续 serve + eval 仍需通过 `llmcompressor_setup.sh` 的 `serve` / `eval` 命令完成。
 
 ### 注意事项
 
