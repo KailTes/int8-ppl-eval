@@ -30,6 +30,7 @@ SKIP_PATTERNS = [
     "lm_head",            # LM head
     ".gate.",             # MoE router/gate (NOT gate_proj which is a GLU expert weight)
     "attn_mhc_module",    # Multi-Head Compression (PanGu-specific, unsupported by omni-npu INT8)
+    "experts",            # MoE expert weights: npu_grouped_matmul has no antiquantScale path
 ]
 
 
