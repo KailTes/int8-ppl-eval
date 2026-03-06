@@ -114,8 +114,8 @@ def main():
     parser.add_argument(
         "--ignore",
         nargs="*",
-        default=["lm_head", "re:.*\\.gate\\..*", "re:.*attn_mhc_module.*"],
-        help="Layer name patterns for quantization_config.ignore (default: lm_head, gate, mhc)",
+        default=["lm_head", "re:.*\\.gate\\..*", "re:.*attn_mhc_module.*", "re:.*experts.*"],
+        help="Layer name patterns for quantization_config.ignore (default: lm_head, gate, mhc, experts)",
     )
     args = parser.parse_args()
 
