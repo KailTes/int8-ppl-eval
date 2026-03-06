@@ -29,39 +29,41 @@
 纯 CPU 离线量化，不依赖 GPU/NPU/模型代码，直接对 safetensors 权重做 RTN per-channel INT8 量化。
 输出 compressed-tensors 格式，兼容 vllm / omni-infer INT8 推理。
 
-所有操作通过 `setup.sh` 完成（量化、拉起服务、评测 PPL）：
-
 ```bash
-# 第 1 步: 量化 (纯 CPU，昇腾容器内自动禁用 torch_npu)
-#   /models 只读时用 QUANT_OUTPUT_BASE 指定输出目录
-QUANT_OUTPUT_BASE=/data/models \
-bash setup.sh quantize_rtn /models/Qwen3-0.6B
-# → 输出: /data/models/Qwen3-0.6B-RTN-W8A8
+# 第 1 步: 量化 (纯 CPU，不需要 GPU/NPU)
+python3 quantize_safetensors_int8.py \
+    --model /models/Qwen3-0.6B \
+    --output /data/models/Qwen3-0.6B-RTN-W8A8
 
-# 第 2 步: 拉起 INT8 模型服务 + PPL 评测 (一条命令完成 serve + eval)
-QUANT_OUTPUT_BASE=/data/models \
-bash setup.sh eval_rtn /models/Qwen3-0.6B
+# 第 2 步: 拉起 INT8 模型服务
+bash setup.sh serve /data/models/Qwen3-0.6B-RTN-W8A8
 
-# 第 3 步: 停止服务
+# 第 3 步: PPL 评测
+bash setup.sh eval /data/models/Qwen3-0.6B-RTN-W8A8
+
+# 第 4 步: 停止服务
 bash setup.sh stop
 ```
 
-也可以同时跑 FP16 baseline 对比：
+`serve` 和 `eval` 接受任意模型路径 — 不管是 FP16 原始模型还是 INT8 量化模型都可以。
+
+FP16 vs W8A8 完整对比：
 
 ```bash
 # FP16 baseline
-bash setup.sh eval_fp16 /models/Qwen3-0.6B
+bash setup.sh serve /models/Qwen3-0.6B
+bash setup.sh eval  /models/Qwen3-0.6B
 bash setup.sh stop
 
 # W8A8 RTN
-QUANT_OUTPUT_BASE=/data/models \
-bash setup.sh eval_rtn /models/Qwen3-0.6B
+bash setup.sh serve /data/models/Qwen3-0.6B-RTN-W8A8
+bash setup.sh eval  /data/models/Qwen3-0.6B-RTN-W8A8
 bash setup.sh stop
 ```
 
-> `quantize_safetensors_int8.py` 也可以独立使用:
-> `python3 quantize_safetensors_int8.py --model /path/to/fp16 --output /path/to/int8`
-> 但后续 serve + eval 仍需通过 `setup.sh` 的 `serve` / `eval` 命令完成。
+> 也提供便利命令 `quantize_rtn` / `eval_rtn`，自动从 FP16 路径推导量化模型路径：
+> `bash setup.sh quantize_rtn /models/Qwen3-0.6B` → 输出到 `Qwen3-0.6B-RTN-W8A8`
+> `bash setup.sh eval_rtn /models/Qwen3-0.6B` → 自动 serve + eval 量化模型
 
 ### 注意事项
 
