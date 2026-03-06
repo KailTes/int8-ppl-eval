@@ -241,7 +241,7 @@ do_serve() {
 
         info "Using run_pangu.sh: ${pangu_script}"
         info "Passing MODEL_PATH=${model_path}"
-        MODEL_PATH="${model_path}" DTYPE="${DTYPE:-auto}" bash "${pangu_script}"
+        MODEL_PATH="${model_path}" bash "${pangu_script}"
         wait_for_serve
     else
         python3 -m vllm.entrypoints.openai.api_server \
