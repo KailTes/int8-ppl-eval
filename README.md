@@ -12,7 +12,7 @@
 ## 文件清单
 
 ```
-├── llmcompressor_setup.sh           主评测脚本 (昇腾 omni-infer，含 RTN/llmcompressor)
+├── setup.sh                         主评测脚本 (量化 + serve + eval，统一入口)
 ├── quantize_safetensors_int8.py     RTN 纯 safetensors INT8 量化 (CPU，无需 GPU/NPU)
 ├── llmcompressor_quantize_w8a8.py   llmcompressor W8A8 量化脚本
 ├── torchao_eval.sh                  torchao 评测脚本 (NVIDIA GPU)
@@ -29,39 +29,39 @@
 纯 CPU 离线量化，不依赖 GPU/NPU/模型代码，直接对 safetensors 权重做 RTN per-channel INT8 量化。
 输出 compressed-tensors 格式，兼容 vllm / omni-infer INT8 推理。
 
-所有操作通过 `llmcompressor_setup.sh` 完成（量化、拉起服务、评测 PPL）：
+所有操作通过 `setup.sh` 完成（量化、拉起服务、评测 PPL）：
 
 ```bash
 # 第 1 步: 量化 (纯 CPU，昇腾容器内自动禁用 torch_npu)
 #   /models 只读时用 QUANT_OUTPUT_BASE 指定输出目录
 QUANT_OUTPUT_BASE=/data/models \
-bash llmcompressor_setup.sh quantize_rtn /models/Qwen3-0.6B
+bash setup.sh quantize_rtn /models/Qwen3-0.6B
 # → 输出: /data/models/Qwen3-0.6B-RTN-W8A8
 
 # 第 2 步: 拉起 INT8 模型服务 + PPL 评测 (一条命令完成 serve + eval)
 QUANT_OUTPUT_BASE=/data/models \
-bash llmcompressor_setup.sh eval_rtn /models/Qwen3-0.6B
+bash setup.sh eval_rtn /models/Qwen3-0.6B
 
 # 第 3 步: 停止服务
-bash llmcompressor_setup.sh stop
+bash setup.sh stop
 ```
 
 也可以同时跑 FP16 baseline 对比：
 
 ```bash
 # FP16 baseline
-bash llmcompressor_setup.sh eval_fp16 /models/Qwen3-0.6B
-bash llmcompressor_setup.sh stop
+bash setup.sh eval_fp16 /models/Qwen3-0.6B
+bash setup.sh stop
 
 # W8A8 RTN
 QUANT_OUTPUT_BASE=/data/models \
-bash llmcompressor_setup.sh eval_rtn /models/Qwen3-0.6B
-bash llmcompressor_setup.sh stop
+bash setup.sh eval_rtn /models/Qwen3-0.6B
+bash setup.sh stop
 ```
 
 > `quantize_safetensors_int8.py` 也可以独立使用:
 > `python3 quantize_safetensors_int8.py --model /path/to/fp16 --output /path/to/int8`
-> 但后续 serve + eval 仍需通过 `llmcompressor_setup.sh` 的 `serve` / `eval` 命令完成。
+> 但后续 serve + eval 仍需通过 `setup.sh` 的 `serve` / `eval` 命令完成。
 
 ### 注意事项
 
@@ -123,18 +123,18 @@ docker run -d --name int8-eval \
 
 ```bash
 docker exec -it int8-eval bash
-bash /data/int8-ppl-eval/llmcompressor_setup.sh all /models/YourModel
+bash /data/int8-ppl-eval/setup.sh all /models/YourModel
 ```
 
 ### 3. 分步执行
 
 ```bash
-bash llmcompressor_setup.sh install                                          # 安装依赖
-bash llmcompressor_setup.sh quantize  /models/YourModel                      # W8A8 量化 (llmcompressor)
-bash llmcompressor_setup.sh quantize_rtn /models/YourModel                   # W8A8 量化 (RTN, 无需 install)
-bash llmcompressor_setup.sh eval_fp16 /models/YourModel 2>&1 | tee fp16.log  # FP16 PPL
-bash llmcompressor_setup.sh eval_w8a8 /models/YourModel 2>&1 | tee w8a8.log  # W8A8 PPL (llmcompressor)
-bash llmcompressor_setup.sh eval_rtn  /models/YourModel 2>&1 | tee rtn.log   # W8A8 PPL (RTN)
+bash setup.sh install                                          # 安装依赖
+bash setup.sh quantize  /models/YourModel                      # W8A8 量化 (llmcompressor)
+bash setup.sh quantize_rtn /models/YourModel                   # W8A8 量化 (RTN, 无需 install)
+bash setup.sh eval_fp16 /models/YourModel 2>&1 | tee fp16.log  # FP16 PPL
+bash setup.sh eval_w8a8 /models/YourModel 2>&1 | tee w8a8.log  # W8A8 PPL (llmcompressor)
+bash setup.sh eval_rtn  /models/YourModel 2>&1 | tee rtn.log   # W8A8 PPL (RTN)
 ```
 
 ## 环境变量
@@ -154,7 +154,7 @@ bash llmcompressor_setup.sh eval_rtn  /models/YourModel 2>&1 | tee rtn.log   # W
 | 问题 | 原因 | 处理方式 |
 |------|------|---------|
 | SM120 compressed-tensors `Int8 not supported` | cuBLAS 不支持 | 使用 torchao 或 RTN 流程 |
-| llmcompressor 降级 torch | pip 依赖解析 | llmcompressor_setup.sh 自动恢复 |
+| llmcompressor 降级 torch | pip 依赖解析 | setup.sh 自动恢复 |
 | graph capture `stream is captured` | CANN 不兼容 | enforce_eager=True |
 | `libhccl.so` not found | CANN 版本路径不对 | 脚本已自动检测 cann-*/set_env.sh |
 | `/models` read-only 写入失败 | 只读挂载 | 设 `QUANT_OUTPUT_BASE=/data/models` |
