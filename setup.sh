@@ -28,6 +28,7 @@ set -uo pipefail
 TASK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVE_PORT="${SERVE_PORT:-8000}"
 TP_SIZE="${TP_SIZE:-1}"
+API_BASE="${API_BASE:-http://localhost:${SERVE_PORT}}"
 
 # 确保本地请求不走代理
 export no_proxy="${no_proxy:+${no_proxy},}localhost,127.0.0.1"
@@ -83,7 +84,7 @@ fix_yaml_path() {
 wait_for_serve() {
     info "Waiting for vllm serve to be ready on port ${SERVE_PORT} ..."
     for i in $(seq 1 120); do
-        if curl --noproxy '*' -s "http://7.150.11.4:8000/v1/models" > /dev/null 2>&1; then
+        if curl --noproxy '*' -s "${API_BASE}/v1/models" > /dev/null 2>&1; then
             info "vllm serve is ready!"
             return 0
         fi
@@ -209,7 +210,7 @@ do_serve() {
     export VLLM_USE_V1="${VLLM_USE_V1:-0}"
 
     # 检测服务是否已在运行
-    if curl --noproxy '*' -s "http://7.150.11.4:8000/v1/models" > /dev/null 2>&1; then
+    if curl --noproxy '*' -s "${API_BASE}/v1/models" > /dev/null 2>&1; then
         info "Service already running on port ${SERVE_PORT}, skipping launch"
         return 0
     fi
@@ -221,27 +222,28 @@ do_serve() {
     info "TP size: ${TP_SIZE}"
     [ -n "${VLLM_PLUGINS:-}" ] && info "VLLM_PLUGINS: ${VLLM_PLUGINS}"
 
-    # 启动服务
+    # PanGu 默认参数 (可通过环境变量 / EXTRA_SERVE_ARGS 覆盖)
     if [ "${model_type}" = "pangu_v2_moe" ]; then
-        info "Using run_pangu.sh for pangu_v2_moe model"
-        bash /home/p00929643/omni-npu/start_server/run_pangu.sh
-        wait_for_serve
-    else
-        vllm serve "${model_path}" \
-            --dtype auto \
-            --gpu-memory-utilization 0.8 \
-            --enforce-eager \
-            --tensor-parallel-size "${TP_SIZE}" \
-            --host 0.0.0.0 \
-            --port "${SERVE_PORT}" \
-            ${EXTRA_SERVE_ARGS:-} \
-            > "${TASK_DIR}/vllm_serve.log" 2>&1 &
-
-        SERVE_PID=$!
-        echo "${SERVE_PID}" > "${TASK_DIR}/.serve_pid"
-        info "Server started (PID: ${SERVE_PID})"
-        wait_for_serve
+        : "${TP_SIZE:=8}"
+        EXTRA_SERVE_ARGS="${EXTRA_SERVE_ARGS:-} --served-model-name pangu --trust-remote-code --max-model-len 4096"
     fi
+
+    # 启动服务
+    python3 -m vllm.entrypoints.openai.api_server \
+        --model "${model_path}" \
+        --dtype auto \
+        --gpu-memory-utilization 0.9 \
+        --enforce-eager \
+        --tensor-parallel-size "${TP_SIZE}" \
+        --host 0.0.0.0 \
+        --port "${SERVE_PORT}" \
+        ${EXTRA_SERVE_ARGS:-} \
+        > "${TASK_DIR}/vllm_serve.log" 2>&1 &
+
+    SERVE_PID=$!
+    echo "${SERVE_PID}" > "${TASK_DIR}/.serve_pid"
+    info "Server started (PID: ${SERVE_PID})"
+    wait_for_serve
 }
 
 # ---- stop ----
@@ -275,19 +277,19 @@ do_eval() {
 
     # 从服务获取实际注册的模型名
     local served_model
-    served_model=$(curl --noproxy '*' -s "http://7.150.11.4:8000/v1/models" | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null || echo "${model_path}")
+    served_model=$(curl --noproxy '*' -s "${API_BASE}/v1/models" | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null || echo "${model_path}")
 
     info "=== PPL Eval via API ==="
     info "Model: ${model_path}"
     info "Served model name: ${served_model}"
-    info "API: http://7.150.11.4:8000/v1/completions"
+    info "API: ${API_BASE}/v1/completions"
     info "Output: ${output_dir}"
 
     mkdir -p "${output_dir}"
     HF_DATASETS_OFFLINE=1 \
     no_proxy="*" NO_PROXY="*" \
     lm_eval --model local-completions \
-        --model_args "model=${served_model},base_url=http://7.150.11.4:8000/v1/completions,tokenizer_backend=huggingface,tokenizer=${model_path},trust_remote_code=True" \
+        --model_args "model=${served_model},base_url=${API_BASE}/v1/completions,tokenizer_backend=huggingface,tokenizer=${model_path},trust_remote_code=True" \
         --include_path "${TASK_DIR}" \
         --tasks wikitext_local \
         --batch_size auto \
