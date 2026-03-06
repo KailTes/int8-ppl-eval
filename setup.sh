@@ -222,28 +222,44 @@ do_serve() {
     info "TP size: ${TP_SIZE}"
     [ -n "${VLLM_PLUGINS:-}" ] && info "VLLM_PLUGINS: ${VLLM_PLUGINS}"
 
-    # PanGu 默认参数 (可通过环境变量 / EXTRA_SERVE_ARGS 覆盖)
-    if [ "${model_type}" = "pangu_v2_moe" ]; then
-        : "${TP_SIZE:=8}"
-        EXTRA_SERVE_ARGS="${EXTRA_SERVE_ARGS:-} --served-model-name pangu --trust-remote-code --max-model-len 4096"
-    fi
-
     # 启动服务
-    python3 -m vllm.entrypoints.openai.api_server \
-        --model "${model_path}" \
-        --dtype auto \
-        --gpu-memory-utilization 0.9 \
-        --enforce-eager \
-        --tensor-parallel-size "${TP_SIZE}" \
-        --host 0.0.0.0 \
-        --port "${SERVE_PORT}" \
-        ${EXTRA_SERVE_ARGS:-} \
-        > "${TASK_DIR}/vllm_serve.log" 2>&1 &
+    if [ "${model_type}" = "pangu_v2_moe" ]; then
+        local pangu_script="${RUN_PANGU_SCRIPT:-}"
+        # 自动查找 run_pangu.sh
+        if [ -z "${pangu_script}" ]; then
+            for candidate in \
+                /home/p00929643/omni-npu/start_server/run_pangu.sh \
+                "${TASK_DIR}/run_pangu.sh" \
+                "$(dirname "${TASK_DIR}")/omni-npu/start_server/run_pangu.sh"; do
+                if [ -f "${candidate}" ]; then
+                    pangu_script="${candidate}"
+                    break
+                fi
+            done
+        fi
+        [ -z "${pangu_script}" ] && error "run_pangu.sh not found. Set RUN_PANGU_SCRIPT=/path/to/run_pangu.sh"
 
-    SERVE_PID=$!
-    echo "${SERVE_PID}" > "${TASK_DIR}/.serve_pid"
-    info "Server started (PID: ${SERVE_PID})"
-    wait_for_serve
+        info "Using run_pangu.sh: ${pangu_script}"
+        info "Passing MODEL_PATH=${model_path}"
+        MODEL_PATH="${model_path}" bash "${pangu_script}"
+        wait_for_serve
+    else
+        python3 -m vllm.entrypoints.openai.api_server \
+            --model "${model_path}" \
+            --dtype auto \
+            --gpu-memory-utilization 0.8 \
+            --enforce-eager \
+            --tensor-parallel-size "${TP_SIZE}" \
+            --host 0.0.0.0 \
+            --port "${SERVE_PORT}" \
+            ${EXTRA_SERVE_ARGS:-} \
+            > "${TASK_DIR}/vllm_serve.log" 2>&1 &
+
+        SERVE_PID=$!
+        echo "${SERVE_PID}" > "${TASK_DIR}/.serve_pid"
+        info "Server started (PID: ${SERVE_PID})"
+        wait_for_serve
+    fi
 }
 
 # ---- stop ----
